@@ -19,11 +19,12 @@ import (
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang bpf kestrel.c -- -I. -I/usr/include -D__TARGET_ARCH_x86
 
 type QueryEvent struct {
-    Pid   uint32
-    _     uint32 // padding to align ts to 8 bytes
-    Ts    uint64
-    Comm  [16]byte
-    Query [256]byte
+    Pid        uint32
+    _          uint32
+    Ts         uint64
+    DurationNs uint64
+    Comm       [16]byte
+    Query      [256]byte
 }
 
 func main() {
@@ -42,6 +43,12 @@ func main() {
         log.Fatalf("opening kprobe: %v", err)
     }
     defer kp.Close()
+
+    kp2, err := link.Kprobe("tcp_recvmsg", objs.KestrelTcpRecvmsg, nil)
+    if err != nil {
+        log.Fatalf("opening kprobe tcp_recvmsg: %v", err)
+    }
+    defer kp2.Close()
 
     rd, err := ringbuf.NewReader(objs.Events)
     if err != nil {
@@ -72,10 +79,12 @@ func main() {
             binary.LittleEndian, &e); err != nil {
             continue
         }
-        fmt.Printf("[%s] pid=%-6d app=%-12s %s\n",
+        ms := float64(e.DurationNs) / 1e6
+        fmt.Printf("[%s] pid=%-6d app=%-12s %7.2fms  %s\n",
             time.Now().Format("15:04:05"),
             e.Pid,
             cstr(e.Comm[:]),
+            ms,
             cstr(e.Query[:]),
         )
     }
